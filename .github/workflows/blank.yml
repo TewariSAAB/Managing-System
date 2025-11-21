@@ -27,6 +27,6 @@ jobs:
           ls -la
           cat Managingstack.yaml
           aws cloudformation deploy \
-          --stack-name inclassstck \
+          --stack-name managingstack \
           --template-file Managingstack.yaml \
           --capabilities CAPABILITY_NAMED_IAM
