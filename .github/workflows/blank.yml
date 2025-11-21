@@ -25,8 +25,8 @@ jobs:
           set -e
           set -x
           ls -la
-          cat 404AZStack.yaml
+          cat Managingstack.yaml
           aws cloudformation deploy \
           --stack-name inclassstck \
-          --template-file 404AZStack.yaml \
+          --template-file Managingstack.yaml \
           --capabilities CAPABILITY_NAMED_IAM
