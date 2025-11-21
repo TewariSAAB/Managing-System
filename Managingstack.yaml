@@ -1,6 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Full AWS web app infrastructure with Lambda using LabRole
 
+Mappings:
+  RegionMap:
+    us-east-1:
+      AZ1: us-east-1a
+      AZ2: us-east-1b
+
 Resources:
 
 # VPC and Networking
@@ -260,4 +266,5 @@ Resources:
               elif method == "POST":
                   return {"statusCode": 200, "body": json.dumps("POST request received")}
               elif method
+
 
