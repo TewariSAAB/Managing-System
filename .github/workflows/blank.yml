@@ -6,9 +6,11 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with: 
@@ -16,17 +18,30 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
+
       - name: List Files
         run: ls -R
         working-directory: ${{ github.workspace }}
-      
+
+      - name: Validate CloudFormation Template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://Managingstack.yaml
+
       - name: Deploy CloudFormation Stack
         run: |
           set -e
           set -x
           ls -la
-          cat Managingstack.yaml
           aws cloudformation deploy \
-          --stack-name managingstack \
-          --template-file Managingstack.yaml \
-          --capabilities CAPABILITY_NAMED_IAM
+            --stack-name managingstack \
+            --template-file Managingstack.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Fetch Stack Events on Failure
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name managingstack \
+            --max-items 20
