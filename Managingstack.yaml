@@ -1,32 +1,124 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Full AWS web app infrastructure with Lambda using LabRole
+Description: >
+  PoC Serverless Stack (DynamoDB) - Single VPC with public/private subnets,
+  NAT Gateway, VPC endpoints (S3, DynamoDB), Lambda (VPC), API Gateway, S3 bucket,
+  DynamoDB table. Uses AWS Academy LabRole.
 
-Mappings:
-  RegionMap:
-    us-east-1:
-      AZ1: us-east-1a
-      AZ2: us-east-1b
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+  PublicSubnet1Cidr:
+    Type: String
+    Default: 10.0.1.0/24
+  PublicSubnet2Cidr:
+    Type: String
+    Default: 10.0.2.0/24
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: 10.0.10.0/24
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: 10.0.20.0/24
+  LambdaTimeout:
+    Type: Number
+    Default: 30
+  LambdaMemory:
+    Type: Number
+    Default: 256
 
 Resources:
 
-# VPC and Networking
-  VPC:
+  ### VPC and Subnets
+  ManageVPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsSupport: true
+      CidrBlock: !Ref VpcCidr
       EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: Manage-VPC
 
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ManageVPC
+      CidrBlock: !Ref PublicSubnet1Cidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PoC-Public-Subnet-1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ManageVPC
+      CidrBlock: !Ref PublicSubnet2Cidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PoC-Public-Subnet-2
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ManageVPC
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PoC-Private-Subnet-1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ManageVPC
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PoC-Private-Subnet-2
+
+  ### Internet Gateway and Route Tables
   InternetGateway:
     Type: AWS::EC2::InternetGateway
 
   AttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
-      VpcId: !Ref VPC
+      VpcId: !Ref ManageVPC
       InternetGatewayId: !Ref InternetGateway
 
-  NatEIP:
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ManageVPC
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  ### NAT Gateway
+  NatEip:
     Type: AWS::EC2::EIP
     Properties:
       Domain: vpc
@@ -34,217 +126,190 @@ Resources:
   NatGateway:
     Type: AWS::EC2::NatGateway
     Properties:
-      AllocationId: !GetAtt NatEIP.AllocationId
-      SubnetId: !Ref PublicSubnet1A
-
-# Subnets
-  PublicSubnet1A:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
-      AvailabilityZone: us-east-1a
-      MapPublicIpOnLaunch: true
-
-  PublicSubnet1B:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
-      AvailabilityZone: us-east-1b
-      MapPublicIpOnLaunch: true
-
-  PrivateSubnet1A:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.10.0/24
-      AvailabilityZone: us-east-1a
-      MapPublicIpOnLaunch: false
-
-  PrivateSubnet1B:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.20.0/24
-      AvailabilityZone: us-east-1b
-      MapPublicIpOnLaunch: false
-
-# Route Tables
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-
-  PublicRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  PublicRouteAssoc1A:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet1A
-      RouteTableId: !Ref PublicRouteTable
-
-  PublicRouteAssoc1B:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet1B
-      RouteTableId: !Ref PublicRouteTable
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnet1
 
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref VPC
+      VpcId: !Ref ManageVPC
 
-  PrivateRoute:
+  PrivateDefaultRoute:
     Type: AWS::EC2::Route
     Properties:
       RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       NatGatewayId: !Ref NatGateway
 
-  PrivateRouteAssoc1A:
+  PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref PrivateSubnet1A
+      SubnetId: !Ref PrivateSubnet1
       RouteTableId: !Ref PrivateRouteTable
 
-  PrivateRouteAssoc1B:
+  PrivateSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref PrivateSubnet1B
+      SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
-# Security Groups
-  BastionSG:
+  ### VPC Endpoints
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref ManageVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable
+      VpcEndpointType: Gateway
+
+  DynamoDbGatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref ManageVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable
+      VpcEndpointType: Gateway
+
+  ### Security Groups
+  LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: SSH access
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
+      GroupDescription: Security group for Lambda
+      VpcId: !Ref ManageVPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
           CidrIp: 0.0.0.0/0
 
-  ALBSG:
-    Type: AWS::EC2::SecurityGroup
+  ### S3 Bucket
+  PoCS3Bucket:
+    Type: AWS::S3::Bucket
     Properties:
-      GroupDescription: Public HTTP
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
+      BucketName: !Sub poc-dyn-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
 
-  WebSG:
-    Type: AWS::EC2::SecurityGroup
+  ### DynamoDB Table
+  PoCDynamoTable:
+    Type: AWS::DynamoDB::Table
     Properties:
-      GroupDescription: HTTP and SSH
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourceSecurityGroupId: !Ref ALBSG
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          SourceSecurityGroupId: !Ref BastionSG
+      TableName: PoCLogs
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
 
-  RDSSG:
-    Type: AWS::EC2::SecurityGroup
+  ### Lambda Function (uses LabRole directly)
+  PoCLambdaFunction:
+    Type: AWS::Lambda::Function
     Properties:
-      GroupDescription: MySQL access
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          SourceSecurityGroupId: !Ref WebSG
+      FunctionName: PoC-Handler
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: arn:aws:iam::690471439659:role/LabRole  # ? hardcoded LabRole ARN
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemory
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref PoCS3Bucket
+          DDB_TABLE: !Ref PoCDynamoTable
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const ddb = new AWS.DynamoDB.DocumentClient();
+          const s3 = new AWS.S3();
+          exports.handler = async (event) => {
+            const now = new Date().toISOString();
+            const payload = event.body ? JSON.parse(event.body) : { msg: 'test' };
+            const item = { pk: 'pocevent', sk: now, payload };
+            await ddb.put({ TableName: process.env.DDB_TABLE, Item: item }).promise();
+            await s3.putObject({
+              Bucket: process.env.S3_BUCKET,
+              Key: pocevents/${now}.json,
+              Body: JSON.stringify(item),
+              ContentType: 'application/json'
+            }).promise();
+            return { statusCode: 200, body: JSON.stringify({ message: 'OK', time: now }) };
+          };
 
-# EC2 Instances
-  BastionHost:
-    Type: AWS::EC2::Instance
+  ### Log Group
+  PoCLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
     Properties:
-      InstanceType: t2.micro
-      KeyName: vockey
-      ImageId: ami-0a5c3558529277641
-      SubnetId: !Ref PublicSubnet1A
-      SecurityGroupIds: [!Ref BastionSG]
+      LogGroupName: !Sub /aws/lambda/${PoCLambdaFunction}
+      RetentionInDays: 30
 
-  WebServer1:
-    Type: AWS::EC2::Instance
+  ### API Gateway
+  PoCApi:
+    Type: AWS::ApiGateway::RestApi
     Properties:
-      InstanceType: t2.micro
-      KeyName: vockey
-      ImageId: ami-0a5c3558529277641
-      SubnetId: !Ref PublicSubnet1A
-      SecurityGroupIds: [!Ref WebSG]
+      Name: PoC-API
 
-  WebServer2:
-    Type: AWS::EC2::Instance
+  PoCResource:
+    Type: AWS::ApiGateway::Resource
     Properties:
-      InstanceType: t2.micro
-      KeyName: vockey
-      ImageId: ami-0a5c3558529277641
-      SubnetId: !Ref PublicSubnet1B
-      SecurityGroupIds: [!Ref WebSG]
+      RestApiId: !Ref PoCApi
+      ParentId: !GetAtt PoCApi.RootResourceId
+      PathPart: poc
 
-  ADServer1:
-    Type: AWS::EC2::Instance
+  PoCMethod:
+    Type: AWS::ApiGateway::Method
     Properties:
-      InstanceType: t3.medium
-      KeyName: vockey
-      ImageId: ami-0a5c3558529277641
-      SubnetId: !Ref PrivateSubnet1A
+      RestApiId: !Ref PoCApi
+      ResourceId: !Ref PoCResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PoCLambdaFunction.Arn}/invocations
 
-  FileServer1:
-    Type: AWS::EC2::Instance
+  PoCDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: PoCMethod
     Properties:
-      InstanceType: t3.medium
-      KeyName: vockey
-      ImageId: ami-0a5c3558529277641
-      SubnetId: !Ref PrivateSubnet1A
+      RestApiId: !Ref PoCApi
 
-# Load Balancers
-  ALB:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  PoCStage:
+    Type: AWS::ApiGateway::Stage
     Properties:
-      Name: WebAppALB
-      Subnets: [!Ref PublicSubnet1A, !Ref PublicSubnet1B]
-      Scheme: internet-facing
-      Type: application
-      SecurityGroups: [!Ref ALBSG]
+      StageName: prod
+      RestApiId: !Ref PoCApi
+      DeploymentId: !Ref PoCDeployment
 
-  NLB:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  LambdaPermissionForApi:
+    Type: AWS::Lambda::Permission
     Properties:
-      Name: WebAppNLB
-      Subnets: [!Ref PublicSubnet1A, !Ref PublicSubnet1B]
-      Scheme: internet-facing
-      Type: network
+      FunctionName: !Ref PoCLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PoCApi}/*/POST/poc
 
-# RDS
-  RDSSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Properties:
-      DBSubnetGroupDescription: RDS subnet group
-      SubnetIds: [!Ref PrivateSubnet1A, !Ref PrivateSubnet1B]
+Outputs:
+  ApiInvokeUrl:
+    Description: "POST URL for PoC API"
+    Value: !Sub https://${PoCApi}.execute-api.${AWS::Region}.amazonaws.com/prod/poc
 
-  RDSInstance:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      DBInstanceClass: db.t3.micro
-      Engine: mysql
-      AllocatedStorage: 20
-      MasterUsername: admin
-      MasterUserPassword: password123
-      VPCSecurityGroups: [!Ref RDSSG]
-      DBSubnetGroupName: !Ref RDSSubnetGroup
+  S3BucketName:
+    Description: "PoC S3 bucket name"
+    Value: !Ref PoCS3Bucket
 
+  DynamoDBTableName:
+    Description: "PoC DynamoDB table name"
+    Value: !Ref PoCDynamoTable
