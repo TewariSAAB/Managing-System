@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Hybrid Web + Serverless Stack:
+  managingstack:
   - VPC with public/private subnets, IGW, NAT Gateway, VPC endpoints (S3, DynamoDB)
   - Security groups for bastion, ALB, web servers, RDS, Lambda
   - EC2 instances (bastion, web servers, AD, file server)
@@ -263,3 +263,4 @@ Resources:
       InstanceType: t3.medium
       KeyName: vockey
       ImageId: ami-0a5c355852
+
