@@ -262,5 +262,6 @@ Resources:
     Properties:
       InstanceType: t3.medium
       KeyName: vockey
-      ImageId: ami-0a5c355852
+      ImageId: ami-0a5c3558529277641
+
 
