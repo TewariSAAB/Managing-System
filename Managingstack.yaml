@@ -417,7 +417,7 @@ Resources:
   PoCLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: Managing-Lambda
+      FunctionName: PoC-Handler
       Runtime: nodejs18.x
       Handler: index.handler
       Role: arn:aws:iam::313765933816:role/LabRole
@@ -532,4 +532,3 @@ Outputs:
 
   VpcId:
     Value: !Ref ManageVPC
-
