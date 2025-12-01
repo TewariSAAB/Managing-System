@@ -7,8 +7,7 @@ Description: >
   - Internet-facing ALB with listener/target group
   - RDS VPC prerequisites (DB Subnet Group)
   - S3 bucket, DynamoDB table
-  - Lambda (LabRole hardcoded) + API Gateway
-
+  - Lambda (LabRole dynamic) + API Gateway
 Parameters:
   VpcCidr:
     Type: String
@@ -266,7 +265,7 @@ Resources:
       InstanceType: t2.micro
       KeyName: !Ref KeyName
       ImageId: ami-0a5c3558529277641
-      SubnetId: !Ref PublicSubnet1   # Option B: keep web servers in public subnets
+      SubnetId: !Ref PublicSubnet1
       SecurityGroupIds:
         - !Ref WebSG
 
@@ -276,7 +275,7 @@ Resources:
       InstanceType: t2.micro
       KeyName: !Ref KeyName
       ImageId: ami-0a5c3558529277641
-      SubnetId: !Ref PublicSubnet2   # Option B: keep web servers in public subnets
+      SubnetId: !Ref PublicSubnet2
       SecurityGroupIds:
         - !Ref WebSG
 
@@ -344,7 +343,7 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref PoCTargetGroup
 
-  ### RDS DB Subnet Group (prerequisite)
+  ### RDS DB Subnet Group (prerequisite) - keep the name you already used earlier
   PoCDBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
@@ -379,14 +378,15 @@ Resources:
           KeyType: RANGE
       BillingMode: PAY_PER_REQUEST
 
-  ### Lambda Function (uses LabRole directly - hardcoded)
+  ### Lambda Function (uses LabRole in current account)
   PoCLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: PoC-Handler
       Runtime: nodejs18.x
       Handler: index.handler
-      Role: arn:aws:iam::313765933816:role/LabRole
+      # use current account's LabRole name (safer than hardcoding a specific account)
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
       Timeout: !Ref LambdaTimeout
       MemorySize: !Ref LambdaMemory
       VpcConfig:
@@ -481,6 +481,47 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PoCApi}/*/POST/poc
 
+  ###########################################################
+  # RDS Aurora Serverless v2 (integrated)
+  ###########################################################
+
+  # Secrets Manager for DB credentials
+  PoCRDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub poc-aurora-credentials-${AWS::AccountId}
+      Description: Master credentials for Aurora Serverless cluster
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "admin"}'
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+
+  # Aurora Serverless v2 Cluster
+  PoCRDSCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      Engine: aurora-mysql
+      EngineMode: provisioned                    # required for Serverless v2
+      DatabaseName: appdb
+      DBSubnetGroupName: !Ref PoCDBSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref RDSSG
+      MasterUsername: !Sub "{{resolve:secretsmanager:${PoCRDSSecret}::username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${PoCRDSSecret}::password}}"
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0.5
+        MaxCapacity: 4
+      StorageEncrypted: true
+
+  # Aurora Serverless v2 instance (db.serverless)
+  PoCRDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref PoCRDSCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-mysql
+
 Outputs:
   ApiInvokeUrl:
     Description: "POST URL for PoC API"
@@ -502,3 +543,10 @@ Outputs:
     Description: "VPC Id"
     Value: !Ref ManageVPC
 
+  RDSEndpoint:
+    Description: "Cluster endpoint"
+    Value: !GetAtt PoCRDSCluster.Endpoint.Address
+
+  RDSPort:
+    Description: "DB Port"
+    Value: !GetAtt PoCRDSCluster.Endpoint.Port
