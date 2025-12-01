@@ -318,3 +318,33 @@ PoCLambdaFunction:
           }).promise();
           return { statusCode: 200, body: JSON.stringify({ message: 'OK', time: now }) };
         };
+
+    ### RDS Subnet Group
+RDSSubnetGroup:
+  Type: AWS::RDS::DBSubnetGroup
+  Properties:
+    DBSubnetGroupDescription: Subnet group for RDS
+    SubnetIds:
+      - !Ref PrivateSubnet1
+      - !Ref PrivateSubnet2
+
+### RDS MySQL Instance
+PoCRDSInstance:
+  Type: AWS::RDS::DBInstance
+  Properties:
+    DBInstanceIdentifier: poc-mysql
+    Engine: mysql
+    EngineVersion: 8.0
+    DBInstanceClass: db.t3.micro
+    AllocatedStorage: 20
+    MasterUsername: admin
+    MasterUserPassword: MySecurePass123!   # ⚠️ Replace with a secure value or use Secrets Manager
+    VPCSecurityGroups:
+      - !Ref RDSSG
+    DBSubnetGroupName: !Ref RDSSubnetGroup
+    MultiAZ: false
+    PubliclyAccessible: false
+    BackupRetentionPeriod: 7
+    DeletionProtection: false
+    StorageEncrypted: true
+
