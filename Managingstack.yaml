@@ -4,11 +4,10 @@ Description: >
   - VPC with public/private subnets, IGW, NAT Gateway, VPC endpoints (S3, DynamoDB)
   - Security groups for bastion, ALB, web servers, RDS, Lambda
   - EC2 instances (bastion, web servers, AD, file server)
-  - ALB with listener/target group
-  - RDS VPC prerequisites (DB Subnet Group) + DynamoDB table
-  - S3 bucket
-  - Lambda (LabRole hardcoded)
-  - API Gateway integrated with Lambda
+  - Internet-facing ALB with listener/target group
+  - RDS VPC prerequisites (DB Subnet Group)
+  - S3 bucket, DynamoDB table
+  - Lambda (LabRole hardcoded) + API Gateway
 
 Parameters:
   VpcCidr:
@@ -301,11 +300,10 @@ Resources:
       SecurityGroupIds:
         - !Ref WebSG
 
-  ### ALB + Target Group + Listener + Attachments
+  ### ALB + Target Group + Listener
   PoCALB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: poc-alb
       Scheme: internet-facing
       Subnets:
         - !Ref PublicSubnet1
@@ -313,21 +311,28 @@ Resources:
       SecurityGroups:
         - !Ref ALBSG
       Type: application
+      Tags:
+        - Key: Name
+          Value: poc-alb
 
   PoCTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: poc-targets
+      VpcId: !Ref ManageVPC
       Port: 80
       Protocol: HTTP
-      VpcId: !Ref ManageVPC
       TargetType: instance
       HealthCheckPath: /
       HealthCheckProtocol: HTTP
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 2
       Matcher:
-        HttpCode: 200
+        HttpCode: '200'
+      Targets:
+        - Id: !Ref WebServer1
+          Port: 80
+        - Id: !Ref WebServer2
+          Port: 80
 
   PoCListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -338,20 +343,6 @@ Resources:
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref PoCTargetGroup
-
-  PoCTargetAttachment1:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroupAttachment
-    Properties:
-      TargetGroupArn: !Ref PoCTargetGroup
-      TargetId: !Ref WebServer1
-      Port: 80
-
-  PoCTargetAttachment2:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroupAttachment
-    Properties:
-      TargetGroupArn: !Ref PoCTargetGroup
-      TargetId: !Ref WebServer2
-      Port: 80
 
   ### RDS DB Subnet Group (prerequisite)
   PoCDBSubnetGroup:
@@ -493,7 +484,7 @@ Resources:
 Outputs:
   ApiInvokeUrl:
     Description: "POST URL for PoC API"
-    Value: !Sub https://${PoCApi}.execute-api.${AWS::Region}.amazonaws.com/prod/poc
+    Value: !Sub 'https://${PoCApi}.execute-api.${AWS::Region}.amazonaws.com/prod/poc'
 
   S3BucketName:
     Description: "PoC S3 bucket name"
