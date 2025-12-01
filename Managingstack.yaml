@@ -386,7 +386,7 @@ Resources:
       FunctionName: PoC-Handler
       Runtime: nodejs18.x
       Handler: index.handler
-      Role: arn:aws:iam::690471439659:role/LabRole
+      Role: arn:aws:iam::313765933816:role/LabRole
       Timeout: !Ref LambdaTimeout
       MemorySize: !Ref LambdaMemory
       VpcConfig:
@@ -501,3 +501,4 @@ Outputs:
   VpcId:
     Description: "VPC Id"
     Value: !Ref ManageVPC
+
