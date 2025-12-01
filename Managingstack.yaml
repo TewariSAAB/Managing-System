@@ -264,4 +264,57 @@ Resources:
       KeyName: vockey
       ImageId: ami-0a5c3558529277641
 
+PoCDynamoTable:
+  Type: AWS::DynamoDB::Table
+  Properties:
+    TableName: PoCLogs
+    AttributeDefinitions:
+      - AttributeName: pk
+        AttributeType: S
+      - AttributeName: sk
+        AttributeType: S
+    KeySchema:
+      - AttributeName: pk
+        KeyType: HASH
+      - AttributeName: sk
+        KeyType: RANGE
+    BillingMode: PAY_PER_REQUEST
 
+PoCLambdaFunction:
+  Type: AWS::Lambda::Function
+  Properties:
+    FunctionName: PoC-Handler
+    Runtime: nodejs18.x
+    Handler: index.handler
+    Role: arn:aws:iam::690471439659:role/LabRole   # still hardcoded
+    Timeout: !Ref LambdaTimeout
+    MemorySize: !Ref LambdaMemory
+    VpcConfig:
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref LambdaSecurityGroup
+    Environment:
+      Variables:
+        S3_BUCKET: !Ref PoCS3Bucket
+        # ✅ FIX: use GetAtt to fetch the actual table name
+        DDB_TABLE: !GetAtt PoCDynamoTable.TableName
+    Code:
+      ZipFile: |
+        const AWS = require('aws-sdk');
+        const ddb = new AWS.DynamoDB.DocumentClient();
+        const s3 = new AWS.S3();
+        exports.handler = async (event) => {
+          const now = new Date().toISOString();
+          const payload = event.body ? JSON.parse(event.body) : { msg: 'test' };
+          const item = { pk: 'pocevent', sk: now, payload };
+          await ddb.put({ TableName: process.env.DDB_TABLE, Item: item }).promise();
+          await s3.putObject({
+            Bucket: process.env.S3_BUCKET,
+            Key: `pocevents/${now}.json`,   // ✅ FIX: backticks
+            Body: JSON.stringify(item),
+            ContentType: 'application/json'
+          }).promise();
+          return { statusCode: 200, body: JSON.stringify({ message: 'OK', time: now }) };
+        };
