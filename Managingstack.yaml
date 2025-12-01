@@ -5,7 +5,7 @@ Description: >
   - Security groups for bastion, ALB, web servers, RDS, Lambda
   - EC2 instances (bastion, web servers, AD, file server)
   - ALB + NLB with listeners/target groups
-  - RDS MySQL + DynamoDB table
+  - RDS VPC prerequisites (DB Subnet Group) + DynamoDB table
   - S3 bucket
   - Lambda (LabRole hardcoded, unchanged)
   - API Gateway integrated with Lambda
@@ -229,7 +229,8 @@ Resources:
       KeyName: vockey
       ImageId: ami-0a5c3558529277641
       SubnetId: !Ref PublicSubnet1
-      SecurityGroupIds: [!Ref BastionSG]
+      SecurityGroupIds:
+        - !Ref BastionSG
 
   WebServer1:
     Type: AWS::EC2::Instance
@@ -238,7 +239,8 @@ Resources:
       KeyName: vockey
       ImageId: ami-0a5c3558529277641
       SubnetId: !Ref PublicSubnet1
-      SecurityGroupIds: [!Ref WebSG]
+      SecurityGroupIds:
+        - !Ref WebSG
 
   WebServer2:
     Type: AWS::EC2::Instance
@@ -247,7 +249,8 @@ Resources:
       KeyName: vockey
       ImageId: ami-0a5c3558529277641
       SubnetId: !Ref PublicSubnet2
-      SecurityGroupIds: [!Ref WebSG]
+      SecurityGroupIds:
+        - !Ref WebSG
 
   ADServer1:
     Type: AWS::EC2::Instance
@@ -264,87 +267,94 @@ Resources:
       KeyName: vockey
       ImageId: ami-0a5c3558529277641
 
-PoCDynamoTable:
-  Type: AWS::DynamoDB::Table
-  Properties:
-    TableName: PoCLogs
-    AttributeDefinitions:
-      - AttributeName: pk
-        AttributeType: S
-      - AttributeName: sk
-        AttributeType: S
-    KeySchema:
-      - AttributeName: pk
-        KeyType: HASH
-      - AttributeName: sk
-        KeyType: RANGE
-    BillingMode: PAY_PER_REQUEST
+  ### S3 Bucket (referenced by Lambda)
+  PoCS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
 
-PoCLambdaFunction:
-  Type: AWS::Lambda::Function
-  Properties:
-    FunctionName: PoC-Handler
-    Runtime: nodejs18.x
-    Handler: index.handler
-    Role: arn:aws:iam::690471439659:role/LabRole   # still hardcoded
-    Timeout: !Ref LambdaTimeout
-    MemorySize: !Ref LambdaMemory
-    VpcConfig:
+  ### DynamoDB Table
+  PoCDynamoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: PoCLogs
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+
+  ### Lambda Function
+  PoCLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: PoC-Handler
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: arn:aws:iam::690471439659:role/LabRole
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemory
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref PoCS3Bucket
+          DDB_TABLE: !GetAtt PoCDynamoTable.TableName
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const ddb = new AWS.DynamoDB.DocumentClient();
+          const s3 = new AWS.S3();
+          exports.handler = async (event) => {
+            const now = new Date().toISOString();
+            const payload = event.body ? JSON.parse(event.body) : { msg: 'test' };
+            const item = { pk: 'pocevent', sk: now, payload };
+            await ddb.put({ TableName: process.env.DDB_TABLE, Item: item }).promise();
+            await s3.putObject({
+              Bucket: process.env.S3_BUCKET,
+              Key: `pocevents/${now}.json`,
+              Body: JSON.stringify(item),
+              ContentType: 'application/json'
+            }).promise();
+            return { statusCode: 200, body: JSON.stringify({ message: 'OK', time: now }) };
+          };
+
+  ### RDS VPC prerequisites (no DB instance)
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS instances
       SubnetIds:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
-      SecurityGroupIds:
-        - !Ref LambdaSecurityGroup
-    Environment:
-      Variables:
-        S3_BUCKET: !Ref PoCS3Bucket
-        # ✅ FIX: use GetAtt to fetch the actual table name
-        DDB_TABLE: !GetAtt PoCDynamoTable.TableName
-    Code:
-      ZipFile: |
-        const AWS = require('aws-sdk');
-        const ddb = new AWS.DynamoDB.DocumentClient();
-        const s3 = new AWS.S3();
-        exports.handler = async (event) => {
-          const now = new Date().toISOString();
-          const payload = event.body ? JSON.parse(event.body) : { msg: 'test' };
-          const item = { pk: 'pocevent', sk: now, payload };
-          await ddb.put({ TableName: process.env.DDB_TABLE, Item: item }).promise();
-          await s3.putObject({
-            Bucket: process.env.S3_BUCKET,
-            Key: `pocevents/${now}.json`,   // ✅ FIX: backticks
-            Body: JSON.stringify(item),
-            ContentType: 'application/json'
-          }).promise();
-          return { statusCode: 200, body: JSON.stringify({ message: 'OK', time: now }) };
-        };
+      Tags:
+        - Key: Name
+          Value: PoC-RDS-SubnetGroup
 
-    ### RDS Subnet Group
-RDSSubnetGroup:
-  Type: AWS::RDS::DBSubnetGroup
-  Properties:
-    DBSubnetGroupDescription: Subnet group for RDS
-    SubnetIds:
-      - !Ref PrivateSubnet1
-      - !Ref PrivateSubnet2
-
-### RDS MySQL Instance
-PoCRDSInstance:
-  Type: AWS::RDS::DBInstance
-  Properties:
-    DBInstanceIdentifier: poc-mysql
-    Engine: mysql
-    EngineVersion: 8.0
-    DBInstanceClass: db.t3.micro
-    AllocatedStorage: 20
-    MasterUsername: admin
-    MasterUserPassword: MySecurePass123!   # ⚠️ Replace with a secure value or use Secrets Manager
-    VPCSecurityGroups:
-      - !Ref RDSSG
-    DBSubnetGroupName: !Ref RDSSubnetGroup
-    MultiAZ: false
-    PubliclyAccessible: false
-    BackupRetentionPeriod: 7
-    DeletionProtection: false
-    StorageEncrypted: true
-
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref ManageVPC
+  RDSSubnetGroupName:
+    Description: Name of the RDS DB Subnet Group
+    Value: !Ref RDSSubnetGroup
+  DynamoDBTableName:
+    Description: DynamoDB table name
+    Value: !GetAtt PoCDynamoTable.TableName
+  S3BucketName:
+    Description: S3 bucket name
+    Value: !Ref PoCS3Bucket
+  LambdaName:
+    Description: Lambda function name
+    Value: !Ref PoCLambdaFunction
