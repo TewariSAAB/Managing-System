@@ -1,35 +1,46 @@
 AWSTemplateFormatVersion: '2010-09-09'
+
 Description: >
   managingstack:
-  - VPC with public/private subnets, IGW, NAT Gateway, VPC endpoints (S3, DynamoDB)
-  - Security groups for bastion, ALB, web servers, RDS, Lambda
-  - EC2 instances (bastion, web servers, AD, file server)
-  - Internet-facing ALB with listener/target group
-  - RDS VPC prerequisites (DB Subnet Group)
-  - S3 bucket, DynamoDB table
-  - Lambda (LabRole dynamic) + API Gateway
+    - VPC with public/private subnets, IGW, NAT Gateway, VPC endpoints (S3, DynamoDB)
+    - Security groups for bastion, ALB, web servers, RDS, Lambda
+    - EC2 instances (bastion, web servers, AD, file server)
+    - Internet-facing ALB with listener/target group
+    - RDS prerequisites (DB subnet group only — NO RDS instance as requested)
+    - S3 bucket, DynamoDB table
+    - Lambda (LabRole hardcoded)
+    - API Gateway
+
 Parameters:
+
   VpcCidr:
     Type: String
     Default: 10.0.0.0/16
+
   PublicSubnet1Cidr:
     Type: String
     Default: 10.0.1.0/24
+
   PublicSubnet2Cidr:
     Type: String
     Default: 10.0.2.0/24
+
   PrivateSubnet1Cidr:
     Type: String
     Default: 10.0.10.0/24
+
   PrivateSubnet2Cidr:
     Type: String
     Default: 10.0.20.0/24
+
   LambdaTimeout:
     Type: Number
     Default: 30
+
   LambdaMemory:
     Type: Number
     Default: 256
+
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
     Default: vockey
@@ -37,7 +48,9 @@ Parameters:
 
 Resources:
 
-  ### VPC + Subnets + Routing
+  ############################################################
+  # VPC + Subnets
+  ############################################################
   ManageVPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -54,7 +67,7 @@ Resources:
       VpcId: !Ref ManageVPC
       CidrBlock: !Ref PublicSubnet1Cidr
       MapPublicIpOnLaunch: true
-      AvailabilityZone: !Select [0, !GetAZs '']
+      AvailabilityZone: !Select [0, !GetAZs ""]
       Tags:
         - Key: Name
           Value: public-subnet-1
@@ -65,7 +78,7 @@ Resources:
       VpcId: !Ref ManageVPC
       CidrBlock: !Ref PublicSubnet2Cidr
       MapPublicIpOnLaunch: true
-      AvailabilityZone: !Select [1, !GetAZs '']
+      AvailabilityZone: !Select [1, !GetAZs ""]
       Tags:
         - Key: Name
           Value: public-subnet-2
@@ -75,7 +88,7 @@ Resources:
     Properties:
       VpcId: !Ref ManageVPC
       CidrBlock: !Ref PrivateSubnet1Cidr
-      AvailabilityZone: !Select [0, !GetAZs '']
+      AvailabilityZone: !Select [0, !GetAZs ""]
       Tags:
         - Key: Name
           Value: private-subnet-1
@@ -85,11 +98,14 @@ Resources:
     Properties:
       VpcId: !Ref ManageVPC
       CidrBlock: !Ref PrivateSubnet2Cidr
-      AvailabilityZone: !Select [1, !GetAZs '']
+      AvailabilityZone: !Select [1, !GetAZs ""]
       Tags:
         - Key: Name
           Value: private-subnet-2
 
+  ############################################################
+  # Internet Gateway + Routing
+  ############################################################
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
@@ -131,6 +147,9 @@ Resources:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
+  ############################################################
+  # NAT Gateway
+  ############################################################
   NatEip:
     Type: AWS::EC2::EIP
     Properties:
@@ -169,12 +188,14 @@ Resources:
       SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
-  ### VPC Endpoints
+  ############################################################
+  # VPC Endpoints
+  ############################################################
   S3GatewayEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
       VpcId: !Ref ManageVPC
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
       RouteTableIds:
         - !Ref PublicRouteTable
         - !Ref PrivateRouteTable
@@ -184,13 +205,15 @@ Resources:
     Type: AWS::EC2::VPCEndpoint
     Properties:
       VpcId: !Ref ManageVPC
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.dynamodb"
       RouteTableIds:
         - !Ref PublicRouteTable
         - !Ref PrivateRouteTable
       VpcEndpointType: Gateway
 
-  ### Security Groups
+  ############################################################
+  # Security Groups
+  ############################################################
   BastionSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -216,7 +239,7 @@ Resources:
   WebSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: HTTP and SSH for web servers
+      GroupDescription: HTTP + SSH for web servers
       VpcId: !Ref ManageVPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -242,13 +265,15 @@ Resources:
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for Lambda
+      GroupDescription: Lambda SG
       VpcId: !Ref ManageVPC
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
 
-  ### EC2 Instances
+  ############################################################
+  # EC2 Instances
+  ############################################################
   BastionHost:
     Type: AWS::EC2::Instance
     Properties:
@@ -299,7 +324,9 @@ Resources:
       SecurityGroupIds:
         - !Ref WebSG
 
-  ### ALB + Target Group + Listener
+  ############################################################
+  # ALB + Target Group + Listener
+  ############################################################
   PoCALB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -343,17 +370,21 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref PoCTargetGroup
 
-  ### RDS DB Subnet Group (prerequisite) - keep the name you already used earlier
+  ############################################################
+  # RDS Subnet Group (NO RDS INSTANCE — AS YOU REQUESTED)
+  ############################################################
   PoCDBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: Subnet group for RDS instances
+      DBSubnetGroupDescription: Subnet group for RDS
       SubnetIds:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
       DBSubnetGroupName: poc-db-subnet-group
 
-  ### S3 Bucket
+  ############################################################
+  # S3 Bucket
+  ############################################################
   PoCS3Bucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -361,11 +392,14 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
-  ### DynamoDB Table
+  ############################################################
+  # DynamoDB Table
+  ############################################################
   PoCDynamoTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: PoCLogs
+      BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: pk
           AttributeType: S
@@ -376,17 +410,17 @@ Resources:
           KeyType: HASH
         - AttributeName: sk
           KeyType: RANGE
-      BillingMode: PAY_PER_REQUEST
 
-  ### Lambda Function (uses LabRole in current account)
+  ############################################################
+  # Lambda Function
+  ############################################################
   PoCLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: PoC-Handler
       Runtime: nodejs18.x
       Handler: index.handler
-      # use current account's LabRole name (safer than hardcoding a specific account)
-      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
+      Role: arn:aws:iam::313765933816:role/LabRole
       Timeout: !Ref LambdaTimeout
       MemorySize: !Ref LambdaMemory
       VpcConfig:
@@ -408,12 +442,10 @@ Resources:
           exports.handler = async (event) => {
             const now = new Date().toISOString();
             const payload = event.body ? JSON.parse(event.body) : { msg: 'test' };
+
             const item = { pk: 'pocevent', sk: now, payload };
 
-            await ddb.put({
-              TableName: process.env.DDB_TABLE,
-              Item: item
-            }).promise();
+            await ddb.put({ TableName: process.env.DDB_TABLE, Item: item }).promise();
 
             await s3.putObject({
               Bucket: process.env.S3_BUCKET,
@@ -422,20 +454,21 @@ Resources:
               ContentType: 'application/json'
             }).promise();
 
-            return {
-              statusCode: 200,
-              body: JSON.stringify({ message: 'OK', time: now })
-            };
+            return { statusCode: 200, body: JSON.stringify({ message: 'OK', time: now }) };
           };
 
-  ### Log Group
+  ############################################################
+  # Lambda Log Group
+  ############################################################
   PoCLambdaLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/PoC-Handler
       RetentionInDays: 30
 
-  ### API Gateway
+  ############################################################
+  # API Gateway
+  ############################################################
   PoCApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
@@ -458,7 +491,8 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PoCLambdaFunction.Arn}/invocations
+        Uri: !Sub >-
+          arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PoCLambdaFunction.Arn}/invocations
 
   PoCDeployment:
     Type: AWS::ApiGateway::Deployment
@@ -481,72 +515,20 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PoCApi}/*/POST/poc
 
-  ###########################################################
-  # RDS Aurora Serverless v2 (integrated)
-  ###########################################################
-
-  # Secrets Manager for DB credentials
-  PoCRDSSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub poc-aurora-credentials-${AWS::AccountId}
-      Description: Master credentials for Aurora Serverless cluster
-      GenerateSecretString:
-        SecretStringTemplate: '{"username": "admin"}'
-        GenerateStringKey: "password"
-        PasswordLength: 16
-        ExcludeCharacters: '"@/\'
-
-  # Aurora Serverless v2 Cluster
-  PoCRDSCluster:
-    Type: AWS::RDS::DBCluster
-    Properties:
-      Engine: aurora-mysql
-      EngineMode: provisioned                    # required for Serverless v2
-      DatabaseName: appdb
-      DBSubnetGroupName: !Ref PoCDBSubnetGroup
-      VpcSecurityGroupIds:
-        - !Ref RDSSG
-      MasterUsername: !Sub "{{resolve:secretsmanager:${PoCRDSSecret}::username}}"
-      MasterUserPassword: !Sub "{{resolve:secretsmanager:${PoCRDSSecret}::password}}"
-      ServerlessV2ScalingConfiguration:
-        MinCapacity: 0.5
-        MaxCapacity: 4
-      StorageEncrypted: true
-
-  # Aurora Serverless v2 instance (db.serverless)
-  PoCRDSInstance:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      DBClusterIdentifier: !Ref PoCRDSCluster
-      DBInstanceClass: db.serverless
-      Engine: aurora-mysql
-
 Outputs:
+
   ApiInvokeUrl:
-    Description: "POST URL for PoC API"
-    Value: !Sub 'https://${PoCApi}.execute-api.${AWS::Region}.amazonaws.com/prod/poc'
+    Description: POST URL for PoC API
+    Value: !Sub "https://${PoCApi}.execute-api.${AWS::Region}.amazonaws.com/prod/poc"
 
   S3BucketName:
-    Description: "PoC S3 bucket name"
     Value: !Ref PoCS3Bucket
 
   DynamoDBTableName:
-    Description: "PoC DynamoDB table name"
     Value: !Ref PoCDynamoTable
 
   ALBDNSName:
-    Description: "ALB DNS name"
     Value: !GetAtt PoCALB.DNSName
 
   VpcId:
-    Description: "VPC Id"
     Value: !Ref ManageVPC
-
-  RDSEndpoint:
-    Description: "Cluster endpoint"
-    Value: !GetAtt PoCRDSCluster.Endpoint.Address
-
-  RDSPort:
-    Description: "DB Port"
-    Value: !GetAtt PoCRDSCluster.Endpoint.Port
